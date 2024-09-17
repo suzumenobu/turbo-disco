@@ -1,0 +1,13 @@
+[package]
+name = "unilist"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.89"
+env_logger = "0.11.5"
+headless_chrome = { version = "1.0.15", features = ["fetch"] }
+log = "0.4.22"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+urlencoding = "2.1.3"
