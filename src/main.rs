@@ -3,7 +3,6 @@ use std::{fs, time::Duration};
 use anyhow::anyhow;
 use headless_chrome::{Browser, LaunchOptions, Tab};
 use serde::{Deserialize, Serialize};
-use urlencoding;
 
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
@@ -207,10 +206,10 @@ fn fetch_spotify_playlist(
     Ok(tracks)
 }
 
-fn find_apple_links<'a>(browser: &Browser, tracks: &[Track]) -> anyhow::Result<Vec<String>> {
+fn find_apple_links(browser: &Browser, tracks: &[Track]) -> anyhow::Result<Vec<String>> {
     let mut result = vec![];
 
-    for (idx, track) in tracks.into_iter().enumerate() {
+    for (idx, track) in tracks.iter().enumerate() {
         let tab = browser.new_tab()?;
 
         let query = format!("{} - {}", &track.name, &track.artist);
@@ -256,23 +255,21 @@ fn try_find_apple_song_link(tab: &Tab, track: &Track) -> anyhow::Result<String> 
         .filter_map(|el| el.get_attribute_value("href").ok())
         .next()
         .flatten()
-        .map(|href| {
+        .and_then(|href| {
             urlencoding::decode(&href)
                 .ok()
                 .map(|href| href.into_owned())
         })
-        .flatten()
         .ok_or_else(|| anyhow::anyhow!("Song not found"))
 }
 
-#[warn(dead_code)]
+#[allow(dead_code)] // Could be useful in the impl of the other music sources
 fn get_body_scroll_height(tab: &Tab) -> anyhow::Result<u64> {
     tab.evaluate("document.body.scrollHeight", true)
         .ok()
-        .map(|obj| match obj.value {
+        .and_then(|obj| match obj.value {
             Some(serde_json::Value::Number(height)) => height.as_u64(),
             unknown => panic!("Unknown height type: {unknown:?}"),
         })
-        .flatten()
         .ok_or(anyhow!("Failed to get height"))
 }
