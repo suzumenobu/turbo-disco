@@ -95,7 +95,7 @@ fn main() {
     let links = match args.dist {
         Some(platform) => match platform {
             Platform::Youtube => todo!(),
-            Platform::Apple => find_apple_links(&browser, &playlist),
+            Platform::Apple => find_apple_links(&browser, playlist.as_slice()),
             Platform::Spotify => todo!(),
             Platform::Unknown => todo!(),
         },
@@ -207,14 +207,10 @@ fn fetch_spotify_playlist(
     Ok(tracks)
 }
 
-fn find_apple_links<'a>(
-    browser: &Browser,
-    tracks: impl IntoIterator<Item = &'a Track>,
-) -> anyhow::Result<Vec<String>> {
+fn find_apple_links<'a>(browser: &Browser, tracks: &[Track]) -> anyhow::Result<Vec<String>> {
     let mut result = vec![];
 
-    for track in tracks {
-        log::info!("Creating new tab");
+    for (idx, track) in tracks.into_iter().enumerate() {
         let tab = browser.new_tab()?;
 
         let query = format!("{} - {}", &track.name, &track.artist);
@@ -223,14 +219,18 @@ fn find_apple_links<'a>(
             urlencoding::encode(&query)
         );
 
-        log::info!("Opening url={url}");
         tab.navigate_to(&url)?;
 
         if let Ok(url) = try_find_apple_song_link(&tab, track) {
-            log::info!("Song: {:#?}", url);
+            log::info!("[{}/{}] Song: {:#?}", idx + 1, tracks.len(), url);
             result.push(url)
         } else {
-            log::warn!("Url not found for {}", track.name);
+            log::warn!(
+                "[{}/{}] Url not found for {}",
+                idx + 1,
+                tracks.len(),
+                track.name
+            );
         }
 
         if let Err(e) = tab.close(true) {
