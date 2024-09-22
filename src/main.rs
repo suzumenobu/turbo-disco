@@ -5,7 +5,7 @@ use headless_chrome::{Browser, LaunchOptions, Tab};
 use serde::{Deserialize, Serialize};
 use urlencoding;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use url::Url;
 
@@ -18,34 +18,20 @@ use url::Url;
 )]
 struct Args {
     /// Input source (either a URL or a JSON file)
-    #[command(subcommand)]
-    from: InputSource,
+    #[arg(short, long)]
+    source: String,
 
     /// Output JSON file to save the parsed playlist
-    #[arg(short, long)]
-    save_to: Option<PathBuf>,
+    #[arg(long)]
+    save: Option<PathBuf>,
 
     /// Target platform to convert the playlist links (e.g., youtube, spotify, apple)
     #[arg(short, long)]
-    to: Option<Platform>,
+    dist: Option<Platform>,
 
     /// Flag to open change browser headless mode
     #[arg(long, default_value_t = false)]
     show_browser: bool,
-}
-
-#[derive(Subcommand, Debug)]
-enum InputSource {
-    /// Link to the input music playlist
-    Link {
-        #[arg(value_parser)]
-        url: Url,
-    },
-    /// JSON file containing the input music playlist
-    Json {
-        #[arg(value_parser)]
-        file: PathBuf,
-    },
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -58,8 +44,8 @@ struct Track {
 /// Enum representing the music platforms
 #[derive(Debug, Clone, PartialEq, ValueEnum)]
 enum Platform {
-    YouTube,
-    AppleMusic,
+    Youtube,
+    Apple,
     Spotify,
     Unknown,
 }
@@ -68,8 +54,8 @@ impl Platform {
     fn from_url(url: &Url) -> Self {
         let host = url.host_str().unwrap_or_default();
         match host {
-            "music.youtube.com" => Platform::YouTube,
-            "music.apple.com" | "itunes.apple.com" => Platform::AppleMusic,
+            "music.youtube.com" => Platform::Youtube,
+            "music.apple.com" | "itunes.apple.com" => Platform::Apple,
             "open.spotify.com" | "spotify.com" => Platform::Spotify,
             _ => Platform::Unknown,
         }
@@ -88,28 +74,28 @@ fn main() {
     let browser = Browser::new(options).unwrap();
 
     // Parse playlist
-    let playlist = match args.from {
-        InputSource::Link { url } => match Platform::from_url(&url) {
-            Platform::YouTube => fetch_yt_playlist(&browser, &url),
-            Platform::AppleMusic => todo!(),
+    let playlist = match Url::try_from(args.source.as_str()) {
+        Ok(url) => match Platform::from_url(&url) {
+            Platform::Youtube => fetch_yt_playlist(&browser, &url),
+            Platform::Apple => todo!(),
             Platform::Spotify => fetch_spotify_playlist(&browser, &url),
             Platform::Unknown => todo!(),
         },
-        InputSource::Json { file: _ } => todo!(),
+        Err(_) => todo!(),
     }
     .expect("Failed to scrape playlist");
 
     // Save playlist if needed
-    if let Some(path) = args.save_to {
+    if let Some(path) = args.save {
         let playlist = serde_json::to_string(&playlist).unwrap();
         fs::write(path, playlist).unwrap();
     }
 
     // Convert to another platform links
-    let links = match args.to {
+    let links = match args.dist {
         Some(platform) => match platform {
-            Platform::YouTube => todo!(),
-            Platform::AppleMusic => find_apple_links(&browser, &playlist),
+            Platform::Youtube => todo!(),
+            Platform::Apple => find_apple_links(&browser, &playlist),
             Platform::Spotify => todo!(),
             Platform::Unknown => todo!(),
         },
@@ -279,6 +265,7 @@ fn try_find_apple_song_link(tab: &Tab, track: &Track) -> anyhow::Result<String> 
         .ok_or_else(|| anyhow::anyhow!("Song not found"))
 }
 
+#[warn(dead_code)]
 fn get_body_scroll_height(tab: &Tab) -> anyhow::Result<u64> {
     tab.evaluate("document.body.scrollHeight", true)
         .ok()
