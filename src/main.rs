@@ -1,5 +1,6 @@
-use std::fs;
+use std::{fs, time::Duration};
 
+use anyhow::anyhow;
 use headless_chrome::{Browser, LaunchOptions, Tab};
 use serde::{Deserialize, Serialize};
 use urlencoding;
@@ -29,7 +30,7 @@ struct Args {
     to: Option<Platform>,
 
     /// Flag to open change browser headless mode
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     show_browser: bool,
 }
 
@@ -47,7 +48,7 @@ enum InputSource {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 struct Track {
     name: String,
     artist: String,
@@ -80,7 +81,8 @@ fn main() {
     let args = Args::parse();
 
     let options = LaunchOptions::default_builder()
-        .headless(args.show_browser)
+        .headless(!args.show_browser)
+        .idle_browser_timeout(Duration::from_secs(1000000))
         .build()
         .unwrap();
     let browser = Browser::new(options).unwrap();
@@ -90,10 +92,10 @@ fn main() {
         InputSource::Link { url } => match Platform::from_url(&url) {
             Platform::YouTube => fetch_yt_playlist(&browser, &url),
             Platform::AppleMusic => todo!(),
-            Platform::Spotify => todo!(),
+            Platform::Spotify => fetch_spotify_playlist(&browser, &url),
             Platform::Unknown => todo!(),
         },
-        InputSource::Json { file } => todo!(),
+        InputSource::Json { file: _ } => todo!(),
     }
     .expect("Failed to scrape playlist");
 
@@ -111,8 +113,7 @@ fn main() {
             Platform::Spotify => todo!(),
             Platform::Unknown => todo!(),
         },
-
-        None => todo!(),
+        None => Ok(vec![]),
     }
     .expect("Failed to convert playlist");
 
@@ -147,6 +148,76 @@ fn fetch_yt_playlist(
         })
         .collect::<Vec<_>>();
     log::info!("Got tracks: {tracks:?}");
+    Ok(tracks)
+}
+
+fn fetch_spotify_playlist(
+    browser: &Browser,
+    playlist_url: impl AsRef<str>,
+) -> anyhow::Result<Vec<Track>> {
+    log::info!("Starting scraping spotify playlist");
+    let tab = browser.new_tab()?;
+    tab.navigate_to(playlist_url.as_ref())?;
+    tab.wait_until_navigated()?;
+
+    let mut tracks = vec![];
+
+    loop {
+        let buf = tab
+            .wait_for_elements(r#"div[data-testid="playlist-tracklist"]>div>div>div:has(a[data-testid="internal-track-link"] > div)"#)
+            .map(|els| els
+            .into_iter()
+            .skip(tracks.len())
+            .filter_map(|el| {
+                if let Err(e) = el.scroll_into_view() {
+                    log::warn!("Failed to scroll to element: {e:?}");
+                }
+                let name = el.find_element("a>div").and_then(|el| el.get_inner_text());
+                let artist = el
+                    .find_element("span>div")
+                    .and_then(|el| el.get_inner_text());
+
+                log::info!("Name: {name:?}, artist: {artist:?}");
+                match (name, artist) {
+                    (Ok(name), Ok(artist)) => Some(Track {
+                        name,
+                        artist,
+                        album: None,
+                    }),
+                    _ => {
+                        log::warn!("Failed to parse track");
+                        None
+                    },
+                }
+            })
+            .collect::<Vec<_>>());
+
+        let mut tracks_added = 0;
+
+        match buf {
+            Err(e) => {
+                log::error!("Failed to collect buffer of tracks: {e:?}");
+                continue;
+            }
+            Ok(buf) => {
+                for track in buf {
+                    if tracks.contains(&track) {
+                        continue;
+                    }
+                    tracks.push(track);
+                    tracks_added += 1;
+                }
+            }
+        }
+
+        log::info!("Added {tracks_added} new tracks");
+
+        if tracks_added == 0 {
+            break;
+        }
+    }
+
+    log::info!("Finished with {} tracks", tracks.len());
     Ok(tracks)
 }
 
@@ -206,4 +277,15 @@ fn try_find_apple_song_link(tab: &Tab, track: &Track) -> anyhow::Result<String> 
         })
         .flatten()
         .ok_or_else(|| anyhow::anyhow!("Song not found"))
+}
+
+fn get_body_scroll_height(tab: &Tab) -> anyhow::Result<u64> {
+    tab.evaluate("document.body.scrollHeight", true)
+        .ok()
+        .map(|obj| match obj.value {
+            Some(serde_json::Value::Number(height)) => height.as_u64(),
+            unknown => panic!("Unknown height type: {unknown:?}"),
+        })
+        .flatten()
+        .ok_or(anyhow!("Failed to get height"))
 }
